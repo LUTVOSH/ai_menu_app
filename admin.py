@@ -5,35 +5,40 @@ from pydantic import BaseModel
 import hashlib
 import time
 
+# Хранилища в памяти: заявки посетителей и флаги активных сессий по столам
 from storage import visitor_submissions, session_flags
+# Работа с базой данных
 from database import db
 
-# Создаем роутер для админских эндпоинтов
+# Роутер админских эндпоинтов, все пути с префиксом /admin
 admin_router = APIRouter(
     prefix="/admin",
     tags=["Админ"],
     responses={404: {"description": "Не найдено"}}
 )
 
+
+# Тело запроса на вход: логин и пароль
 class AdminLoginRequest(BaseModel):
     login: str
     password: str
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "login": "admin",
-                "password": "password123"
-            }
+            "example": {"login": "admin", "password": "password123"}
         }
     }
 
+
+# Ответ после успешного входа: токен, роль, id и логин
 class AdminLoginResponse(BaseModel):
     token: str
     role: str
     user_id: int
     login: str
 
+
+# Публичные данные пользователя-админа (без пароля)
 class AdminUserResponse(BaseModel):
     id: int
     login: str
@@ -42,21 +47,21 @@ class AdminUserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Данные для создания нового пользователя системы
 class AdminUserCreate(BaseModel):
     login: str
     password: str
-    role: str = "waiter"
+    role: str = "waiter"  # по умолчанию — официант
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "login": "waiter1",
-                "password": "password123",
-                "role": "waiter"
-            }
+            "example": {"login": "waiter1", "password": "password123", "role": "waiter"}
         }
     }
 
+
+# Данные для обновления пользователя (все поля опциональны)
 class AdminUserUpdate(BaseModel):
     login: Optional[str] = None
     password: Optional[str] = None
@@ -64,14 +69,12 @@ class AdminUserUpdate(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "login": "updated_waiter",
-                "password": "newpassword456",
-                "role": "waiter"
-            }
+            "example": {"login": "updated_waiter", "password": "newpassword456", "role": "waiter"}
         }
     }
 
+
+# Схема обычного пользователя (посетителя) из БД
 class UserFromDB(BaseModel):
     id: Optional[int] = None
     login: Optional[str] = None
@@ -82,6 +85,8 @@ class UserFromDB(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Схема категории блюд
 class Category(BaseModel):
     id: Optional[int] = None
     name: str
@@ -90,6 +95,8 @@ class Category(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Данные для создания блюда
 class DishCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -97,6 +104,8 @@ class DishCreate(BaseModel):
     category_id: Optional[int] = None
     is_available: bool = True
 
+
+# Полные данные блюда в ответе (с названием категории)
 class DishResponse(BaseModel):
     id: int
     name: str
@@ -109,6 +118,8 @@ class DishResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Данные для частичного обновления блюда
 class DishUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -116,6 +127,8 @@ class DishUpdate(BaseModel):
     category_id: Optional[int] = None
     is_available: Optional[bool] = None
 
+
+# Схема напитка в ответе
 class BarItemResponse(BaseModel):
     id: int
     name: str
@@ -128,6 +141,8 @@ class BarItemResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Данные для создания напитка
 class BarItemCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -136,6 +151,8 @@ class BarItemCreate(BaseModel):
     strength: Optional[float] = None
     is_available: bool = True
 
+
+# Данные для частичного обновления напитка
 class BarItemUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -144,6 +161,8 @@ class BarItemUpdate(BaseModel):
     strength: Optional[float] = None
     is_available: Optional[bool] = None
 
+
+# Схема ингредиента на складе
 class IngredientResponse(BaseModel):
     id: int
     name: str
@@ -154,18 +173,25 @@ class IngredientResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Данные для создания ингредиента
 class IngredientCreate(BaseModel):
     name: str
     unit: str
     current_stock: float = 0.0
     min_stock_level: float = 0.0
 
+
+# Данные для частичного обновления ингредиента
 class IngredientUpdate(BaseModel):
     name: Optional[str] = None
     unit: Optional[str] = None
     current_stock: Optional[float] = None
     min_stock_level: Optional[float] = None
 
+
+# Аутентификация админа: проверяет логин/пароль через db.verify_admin_password().
+# При успехе генерирует SHA-256 токен из id:login:role:timestamp и возвращает его с ролью и id.
 @admin_router.post("/admins/login",
                    response_model=AdminLoginResponse,
                    summary="Вход администратора",
@@ -180,6 +206,7 @@ async def admin_login(login_data: AdminLoginRequest):
                 detail="Неверный логин или пароль"
             )
 
+        # Строка для токена: id + логин + роль + метка времени, затем хеш
         token_data = f"{admin_data['id']}:{admin_data['login']}:{admin_data['role']}:{time.time()}"
         token = hashlib.sha256(token_data.encode()).hexdigest()
 
@@ -198,6 +225,8 @@ async def admin_login(login_data: AdminLoginRequest):
             detail=f"Ошибка при входе: {str(e)}"
         )
 
+
+# Возвращает список всех пользователей-админов (без хешей паролей)
 @admin_router.get("/admins",
                   response_model=List[AdminUserResponse],
                   summary="Получить всех администраторов",
@@ -209,6 +238,9 @@ async def get_all_admin_users():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Создаёт пользователя системы (superuser/cook/waiter).
+# Валидирует длину логина (>=3), непустой пароль и допустимую роль, затем сохраняет в БД.
 @admin_router.post("/admins",
                    response_model=AdminUserResponse,
                    summary="Создать нового пользователя системы",
@@ -230,7 +262,7 @@ async def create_admin_user(admin: AdminUserCreate):
 
         admin_data = {
             "login": admin.login,
-            "password_hash": admin.password,
+            "password_hash": admin.password,  # хеширование — внутри слоя БД
             "role": admin.role
         }
 
@@ -241,6 +273,9 @@ async def create_admin_user(admin: AdminUserCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Частично обновляет пользователя: берёт только переданные непустые поля,
+# валидирует логин/пароль/роль и вызывает db.update_admin_user().
 @admin_router.put("/admins/{admin_id}",
                   response_model=AdminUserResponse,
                   summary="Обновить пользователя системы",
@@ -278,9 +313,12 @@ async def update_admin_user(admin_id: int, admin: AdminUserUpdate):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        traceback.print_exc()  # стек в консоль для отладки
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Удаляет пользователя-админа по ID.
+# Защита от удаления последнего админа реализована внутри db.delete_admin_user().
 @admin_router.delete("/admins/{admin_id}",
                      summary="Удалить администратора",
                      description="Удаляет администратора по ID. Нельзя удалить последнего администратора.")
@@ -300,6 +338,8 @@ async def delete_admin_user(admin_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Возвращает список всех обычных пользователей (посетителей)
 @admin_router.get("/users", response_model=List[UserFromDB], summary="Получить всех пользователей")
 async def get_all_users():
     try:
@@ -308,6 +348,8 @@ async def get_all_users():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Удаляет пользователя по ID, если не найден — 404
 @admin_router.delete("/users/{user_id}", summary="Удалить пользователя")
 async def delete_user(user_id: int):
     try:
@@ -324,6 +366,8 @@ async def delete_user(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Возвращает общее количество пользователей в БД
 @admin_router.get("/users/count", summary="Получить число пользователей")
 async def get_users_count():
     try:
@@ -336,6 +380,9 @@ async def get_users_count():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
+
+# Список блюд с фильтрами: category_id — только из категории,
+# available_only — только доступные (по умолчанию True)
 @admin_router.get("/dishes", response_model=List[DishResponse], summary="Получить все блюда")
 async def get_all_dishes(
         category_id: Optional[int] = Query(None, description="Фильтр по категории"),
@@ -347,6 +394,8 @@ async def get_all_dishes(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Возвращает одно блюдо по ID или 404
 @admin_router.get("/dishes/{dish_id}", response_model=DishResponse, summary="Получить блюдо")
 async def get_dish(dish_id: int):
     dish = db.get_dish_by_id(dish_id)
@@ -354,6 +403,8 @@ async def get_dish(dish_id: int):
         raise HTTPException(status_code=404, detail="Блюдо не найдено")
     return dish
 
+
+# Создаёт новое блюдо
 @admin_router.post("/dishes", response_model=DishResponse, summary="Создать блюдо")
 async def create_dish(dish: DishCreate):
     try:
@@ -362,6 +413,8 @@ async def create_dish(dish: DishCreate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Частично обновляет блюдо: только непустые (не None) поля
 @admin_router.put("/dishes/{dish_id}", response_model=DishResponse, summary="Изменить блюдо")
 async def update_dish(dish_id: int, dish: DishUpdate):
     try:
@@ -373,6 +426,8 @@ async def update_dish(dish_id: int, dish: DishUpdate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Удаляет блюдо по ID или 404
 @admin_router.delete("/dishes/{dish_id}", summary="Удалить блюдо")
 async def delete_dish(dish_id: int):
     success = db.delete_dish(dish_id)
@@ -380,6 +435,8 @@ async def delete_dish(dish_id: int):
         raise HTTPException(status_code=404, detail="Блюдо не найдено")
     return {"success": True, "message": f"Блюдо с ID {dish_id} удалено"}
 
+
+# Возвращает список всех напитков бара
 @admin_router.get("/bar-items", response_model=List[BarItemResponse], summary="Получить все напитки")
 async def get_all_bar_items():
     try:
@@ -388,6 +445,8 @@ async def get_all_bar_items():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Возвращает один напиток по ID или 404
 @admin_router.get("/bar-items/{item_id}", response_model=BarItemResponse, summary="Получить напиток")
 async def get_bar_item(item_id: int):
     item = db.get_bar_item_by_id(item_id)
@@ -395,6 +454,8 @@ async def get_bar_item(item_id: int):
         raise HTTPException(status_code=404, detail="Напиток не найден")
     return item
 
+
+# Создаёт новый напиток в баре
 @admin_router.post("/bar-items", response_model=BarItemResponse, summary="Создать напиток")
 async def create_bar_item(item: BarItemCreate):
     try:
@@ -403,6 +464,8 @@ async def create_bar_item(item: BarItemCreate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Частично обновляет напиток: только непустые поля
 @admin_router.put("/bar-items/{item_id}", response_model=BarItemResponse, summary="Изменить напиток")
 async def update_bar_item(item_id: int, item: BarItemUpdate):
     try:
@@ -414,6 +477,8 @@ async def update_bar_item(item_id: int, item: BarItemUpdate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Удаляет напиток по ID или 404
 @admin_router.delete("/bar-items/{item_id}", summary="Удалить напиток")
 async def delete_bar_item(item_id: int):
     success = db.delete_bar_item(item_id)
@@ -421,6 +486,8 @@ async def delete_bar_item(item_id: int):
         raise HTTPException(status_code=404, detail="Напиток не найден")
     return {"success": True, "message": f"Напиток с ID {item_id} удален"}
 
+
+# Возвращает все категории блюд
 @admin_router.get("/categories", response_model=List[Category], summary="Получить все категории")
 async def get_all_categories():
     try:
@@ -429,6 +496,8 @@ async def get_all_categories():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Служебный эндпоинт для клиентов: тот же список категорий без фильтрации
 @admin_router.get("/visit_categories", summary="Получить категорию")
 async def get_visit_categories():
     try:
@@ -437,6 +506,8 @@ async def get_visit_categories():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Полное меню: блюда + напитки бара и счётчики (total_dishes, total_drinks, total_items)
 @admin_router.get("/menu/all", summary="Получить всё меню")
 async def get_complete_menu():
     try:
@@ -453,6 +524,8 @@ async def get_complete_menu():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Возвращает все ингредиенты на складе
 @admin_router.get("/ingredients", response_model=List[IngredientResponse], summary="Получить все ингредиенты")
 async def get_all_ingredients():
     try:
@@ -461,6 +534,8 @@ async def get_all_ingredients():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Создаёт новый ингредиент на складе
 @admin_router.post("/ingredients", response_model=IngredientResponse, summary="Создать ингредиент")
 async def create_ingredient(ingredient: IngredientCreate):
     try:
@@ -469,6 +544,8 @@ async def create_ingredient(ingredient: IngredientCreate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Частично обновляет ингредиент: только переданные непустые поля
 @admin_router.put("/ingredients/{ingredient_id}", summary="Изменить ингредиент")
 async def update_ingredient(ingredient_id: int, ingredient: IngredientUpdate):
     try:
@@ -480,6 +557,8 @@ async def update_ingredient(ingredient_id: int, ingredient: IngredientUpdate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# Удаляет ингредиент по ID или 404
 @admin_router.delete("/ingredients/{ingredient_id}", summary="Удалить ингредиент")
 async def delete_ingredient(ingredient_id: int):
     success = db.delete_ingredient(ingredient_id)
@@ -487,6 +566,9 @@ async def delete_ingredient(ingredient_id: int):
         raise HTTPException(status_code=404, detail="Ингредиент не найден")
     return {"success": True, "message": f"Ингредиент с ID {ingredient_id} удален"}
 
+
+# Диагностика БД: путь к файлу, размер, наличие таблицы users, список таблиц,
+# количество пользователей/блюд/напитков. При ошибке возвращает status="error", а не бросает.
 @admin_router.get("/db/health", summary="Проверка соединения с бд")
 async def db_health_check():
     try:
@@ -508,6 +590,7 @@ async def db_health_check():
             "message": "Подключение к базе данных успешно"
         }
 
+        # Счётчики по основным таблицам
         db_info["users_count"] = db.get_users_count()
         db_info["dishes_count"] = db.get_dishes_count()
         db_info["bar_items_count"] = db.get_bar_items_count()
@@ -522,6 +605,8 @@ async def db_health_check():
             "message": "Ошибка подключения к базе данных"
         }
 
+
+# Возвращает все заявки посетителей (visitor_submissions) и число активных сессий
 @admin_router.get("/submissions", summary="Получить все заявки посетителей")
 async def get_all_submissions():
     return {
@@ -530,6 +615,8 @@ async def get_all_submissions():
         "active_sessions": len([f for f in session_flags.values() if f])
     }
 
+
+# Возвращает заявки конкретного стола, статус его сессии и флаг наличия заказа
 @admin_router.get("/submissions/{table_number}", summary="Получить заявку по номеру стола")
 async def get_table_submission(table_number: int):
     table_subs = [s for s in visitor_submissions if s["table_number"] == table_number]
@@ -542,6 +629,9 @@ async def get_table_submission(table_number: int):
         "has_active_order": len(table_subs) > 0
     }
 
+
+# Сводка по всем столам с заявками: номер, активна ли сессия, число заказов, время последнего.
+# Плюс общие счётчики: total_tables, active_sessions, total_orders.
 @admin_router.get("/tables/status", summary="Получить статус всех столов")
 async def get_tables_status():
     statuses = []
@@ -566,9 +656,12 @@ async def get_tables_status():
         "total_orders": len(visitor_submissions)
     }
 
+
+# Помечает стол как обслуженный: удаляет все его заявки из visitor_submissions
+# и сбрасывает флаг активной сессии в False
 @admin_router.put("/complete/{table_number}", summary="Сделать стол обслуженным")
 async def mark_table_completed(table_number: int):
-    global visitor_submissions
+    global visitor_submissions  # перезаписываем глобальный список
     visitor_submissions = [
         s for s in visitor_submissions
         if s["table_number"] != table_number
